@@ -1,4 +1,6 @@
 import tensorflow as tf
+import pandas as pd
+import numpy as np
 
 
 class DMN(object):
@@ -10,12 +12,16 @@ class DMN(object):
         self._n_hid = n_hid
         self._n_episodes = n_episodes
 
+        self._inputs = tf.placeholder(tf.int32, [None], name="inputs")
+        self._fact_indices = tf.placeholder(tf.int32, [None], name="fact_indices")
+        self._question = tf.placeholder(tf.int32, [None], name="question")
+        self._outputs = tf.placeholder(tf.int32, [None], name="outputs")
+
+        self._embeddings, self._embeddings_indices = self._get_embeddings()
+
         ####################
         ### Input module ###
         ####################
-
-        self._inputs = tf.placeholder(tf.int32, [None, n_emb], name="inputs")
-        self._fact_indices = tf.placeholder(tf.int32, [None], name="fact_indices")
 
         with tf.variable_scope("facts"):
             self._facts = self._compute_facts()
@@ -24,8 +30,6 @@ class DMN(object):
         #######################
         ### Question module ###
         #######################
-
-        self._question = tf.placeholder(tf.int32, [None, n_emb], name="question")
 
         with tf.variable_scope("question"):
             self._q = self._compute_question()
@@ -41,39 +45,70 @@ class DMN(object):
         ### Answer module ###
         #####################
 
-        
+        with tf.variable_scope("answer_module"):
+            self._answer, self._logits = self._compute_answer()
+
+        ####################
+        ### For training ###
+        ###################
+
+        with tf.variable_scope("loss"):
+            self._loss = self._compute_loss()
+
+    
+    def _get_embeddings(self):
+        """
+        Gets the glove embeddings.
+        """
+
+        location = os.path.join("src", "glove.6B.%dd.txt" % self.n_emb)
+
+        words_embeddings = pd.read_table(location, header=None)
+
+        embeddings = words_embeddings[words_embeddings.columns[1:]].as_matrix().astype(np.float32)
+        embeddings = np.vstack((np.zeros([self._n_emb]),
+                                      embeddings,
+                                      np.zeros([self._n_emb])))
+
+        embeddings_indices = {w: i for i, w in enumerate(words_embeddings[0])}
+        embeddings_indices["__end__"] = embeddings.shape[0] - 1
+
+        return embeddings, embeddings_indices
+ 
 
     def _fact_step(self, h_prev, x):
         """
         Computes a single fact step.
         """
 
+        e = tf.nn.embedding_lookup(self._embeddings, x)
+
         initializer = tf.random_uniform_initializer(-0.01, 0.01)
 
         with tf.variable("gru_block"):
 
-            W_z = tf.get_variable("W_z", [self._n_hid, self._n_in],
+            W_z = tf.get_variable("W_z", [self._n_hid, self._n_emd],
                                   initializer=initializer)
             U_z = tf.get_variable("U_z", [self._n_hid, self._n_hid],
                                   initializer=initializer)
             b_z = tf.get_variable("b_z", [self._n_hid],
-                                  initializer=initializer)
-            W_r = tf.get_variable("W_r", [self._n_hid, self._n_in],
+                                  initializer=tf.constant_initializer(0.0))
+            W_r = tf.get_variable("W_r", [self._n_hid, self._n_emd],
                                   initializer=initializer)
             U_r = tf.get_variable("U_r", [self._n_hid, self._n_hid],
                                   initializer=initializer)
             b_r = tf.get_variable("b_r", [self._n_hid],
-                                  initializer=initializer)
-            W = tf.get_variable("W", [self._n_hid, self._n_in],
+                                  initializer=tf.constant_initializer(0.0))
+            W = tf.get_variable("W", [self._n_hid, self._n_emd],
                                 initializer=initializer)
             U = tf.get_variable("U", [self._n_hid, self._n_hid],
                                 initializer=initializer)
             b = tf.get_variable("b", [self._n_hid],
-                                initializer=initializer)
+                                initializer=tf.constant_initializer(0.0))
 
-            z = tf.sigmoid(tf.matmul(W_z, x) + tf.matmul(U_z, h_prev) + b_z)
-            r = tf.sigmoid(tf.matmul(W_r, x) + tf.matmul(U_r, h_prev) + b_r)
-            h_tilde = tf.tanh(tf.matmul(W, x) + r * tf.matmul(U, h_prev) + b)
+            z = tf.sigmoid(tf.matmul(W_z, e) + tf.matmul(U_z, h_prev) + b_z)
+            r = tf.sigmoid(tf.matmul(W_r, e) + tf.matmul(U_r, h_prev) + b_r)
+            h_tilde = tf.tanh(tf.matmul(W, e) + r * tf.matmul(U, h_prev) + b)
             h = z * h_prev + (1 - z) * h_tilde
 
         return h
@@ -159,19 +194,19 @@ class DMN(object):
             U_z = tf.get_variable("U_z", [self._n_hid, self._n_hid],
                                   initializer=initializer)
             b_z = tf.get_variable("b_z", [self._n_hid],
-                                  initializer=initializer)
+                                  initializer=tf.constant_initializer(0.0))
             W_r = tf.get_variable("W_r", [self._n_hid, self._n_hid],
                                   initializer=initializer)
             U_r = tf.get_variable("U_r", [self._n_hid, self._n_hid],
                                   initializer=initializer)
             b_r = tf.get_variable("b_r", [self._n_hid],
-                                  initializer=initializer)
+                                  initializer=tf.constant_initializer(0.0))
             W = tf.get_variable("W", [self._n_hid, self._n_hid],
                                 initializer=initializer)
             U = tf.get_variable("U", [self._n_hid, self._n_hid],
                                 initializer=initializer)
             b = tf.get_variable("b", [self._n_hid],
-                                initializer=initializer)
+                                initializer=tf.constant_initializer(0.0))
 
             z = tf.sigmoid(tf.matmul(W_z, c) + tf.matmul(U_z, h_prev) + b_z)
             r = tf.sigmoid(tf.matmul(W_r, c) + tf.matmul(U_r, h_prev) + b_r)
@@ -210,20 +245,77 @@ class DMN(object):
         return m
 
 
-    def _answer_step(self):
+    def _answer_step(self, y_prev, a_prev):
         """
         Computes a single answer step.
         """
 
-        
+        x = tf.concat(0, [y_prev, self._q])
+
+        initializer = tf.random_uniform_initializer(-0.01, 0.01)
+
+        with tf.variable_scope("gru_block"):
+            
+            W_z = tf.get_variable("W_z", [self._n_hid, self._n_hid * 2],
+                                  initializer=initializer)
+            U_z = tf.get_variable("U_z", [self._n_hid, self._n_hid],
+                                  initializer=initializer)
+            b_z = tf.get_variable("b_z", [self._n_hid],
+                                  initializer=tf.constant_initializer(0.0))
+            W_r = tf.get_variable("W_r", [self._n_hid, self._n_hid * 2],
+                                  initializer=initializer)
+            U_r = tf.get_variable("U_r", [self._n_hid, self._n_hid],
+                                  initializer=initializer)
+            b_r = tf.get_variable("b_r", [self._n_hid],
+                                  initializer=tf.constant_initializer(0.0))
+            W = tf.get_variable("W", [self._n_hid, self._n_hid * 2],
+                                initializer=initializer)
+            U = tf.get_variable("U", [self._n_hid, self._n_hid],
+                                initializer=initializer)
+            b = tf.get_variable("b", [self._n_hid],
+                                initializer=tf.constant_initializer(0.0))
+
+            z = tf.sigmoid(tf.matmul(W_z, x) + tf.matmul(U_z, a) + b_z)
+            r = tf.sigmoid(tf.matmul(W_r, x) + tf.matmul(U_r, a) + b_r)
+            a_tilde = tf.tanh(tf.matmul(W, x) + r * tf.matmul(U, a) + b)
+            a = z * a + (1 - z) * a_tilde
+
+        with tf.variable_scope("predictions"):
+
+            W_a = tf.get_variable("W_a", [self._n_hid, self._n_hid],
+                                  initializer=initializer)
+            
+            y = tf.softmax(tf.matmul(W_a, a))
+
+        return y, a
+
 
     def _compute_answer(self):
         """
         Computes the answer.
         """
 
-        with tf.variable_scope("states"):
-            states = tf.scan(self._gru_step, 
+        with tf.variable_scope("predictions"):
+            y = self._q
+            a = tf.zeros([self._n_hid])
+            _ = tf.zeros([tf.shape(self._outputs)[0]])
+            logits, _ = tf.scan(self._answer_step, _)
+            predictions = tf.argmax(logits, 1)
+
+        return predictions, logits
+
+
+    def _compute_loss(self):
+        """
+        Computes the cross-validation loss.
+        """
+
+        loss = tf.nn.sparse_softmax_cross_entropy_with_logits(self._logits,
+                                                              self._outputs)
+
+        return loss
+
+        
         
         
             
